@@ -56,6 +56,7 @@
 #include "uart.h"
 #include "functions.h"
 #include "stdio.h"
+#include "stdlib.h"
 #include "ADC.h"
 #include "string.h"
 
@@ -63,6 +64,8 @@
 #define MAX_DUTY_CYCLES 40000 // Sets the maximum number of clock cycles (on + off) for a duty cycle
 #define DUTY_CYCLES_SAFETY 300 // Sets the safety margins within which the duty cycle must operate
 #define DUTY_CYCLES_INCREMENT_DEFAULT 200 // Default increment for duty_amount
+
+#define PB3_HOLD_SECONDS 3
 
 #define BUTTON1 (PORTAbits.RA2 == 0)
 #define BUTTON2 (PORTBbits.RB4 == 0)
@@ -77,7 +80,7 @@ enum statey {
     FINISH,
 };
 
-uint8_t received;
+//uint8_t received;
 uint8_t received_char = '0';
 uint8_t RXFlag = 0;
 
@@ -100,9 +103,32 @@ uint8_t dynamic_duty_enable = 1;
 
 uint16_t led_off = 0;
 
-char micro_nums[4] = "0000";
+uint8_t do_PB3_count = 0;
+uint16_t PB3_count = 0;
+
+uint16_t counter_seconds = 0;
+
+char micro_nums[6] = {0x30, 0x30, 0x00, 0x30, 0x30, 0x00};
+uint8_t do_reverse_parse = 0;
 
 enum statey the_state = WAIT;
+
+static inline void micro_nums_parse() {
+    uint16_t minutes;
+    uint16_t seconds;
+    
+    minutes = atoi(&micro_nums[0]);
+    seconds = atoi(&micro_nums[3]);
+    
+    counter_seconds = minutes * 60 + seconds;
+}
+
+static inline void micro_nums_reverse_parse(uint16_t the_seconds) {
+    uint16_t minutes = the_seconds / 60;
+    uint16_t seconds = the_seconds % 60;
+    
+    sprintf(micro_nums, "%02d %02d", minutes, seconds);
+}
 
 static inline void get_new_duty() {
     if (duty_amount >= MAX_DUTY_CYCLES - DUTY_CYCLES_SAFETY) duty_direction = 0;
@@ -125,43 +151,80 @@ int main(void) {
     
     T1CONbits.TON = 1;
     T2CONbits.TON = 1;
+    
+    char input_str[40];
+    input_str[39] = '\0';
     while(1) {
         get_sample();
         
+        if (do_reverse_parse) {
+            micro_nums_reverse_parse(counter_seconds);
+            do_reverse_parse = 0;
+        }
+        
         switch (the_state) {
             case WAIT:
-                if (PB_achieved == 0b001) the_state = TIME_INPUT;
                 dynamic_duty_enable = 1;
-                Disp2String("Press PB1 to input time\r");
+                strcpy(input_str, "Press PB1 to input time            \r");
                 break;
             case TIME_INPUT:
                 dynamic_duty_enable = 0;
                 duty_amount = 100;
-                char input_str[] = "Give an input 00:00 (min:sec)\r\0";
+                strcpy(input_str, "Give an input 00:00 (min:sec)  \r\0");
                 input_str[14] = micro_nums[0]; input_str[15] = micro_nums[1];
-                input_str[17] = micro_nums[2]; input_str[18] = micro_nums[3];
-                Disp2String(input_str);
-                // add code to accept user input
+                input_str[17] = micro_nums[3]; input_str[18] = micro_nums[4];
                 break;
             case COUNTDOWN_1:
                 // add code to dispaly current counter
                 led_off = !led_off;
                 duty_amount = 100 + ADC_val * 38 * led_off;
+                
+                
+                micro_nums_reverse_parse(counter_seconds);
+                //do_reverse_parse = 1;
+                
+                
+                sprintf(input_str, "Here is the timer %02d:%02d      \r\0", counter_seconds / 60, counter_seconds % 60);
+                
+                if (counter_seconds <= 1) the_state = FINISH;
+                counter_seconds -= 1;
+                
+                if (do_PB3_count) PB3_count += 1;
                 break;
             case COUNTDOWN_2:
                 // add code to display adc reading
                 led_off = !led_off;
                 duty_amount = 100 + ADC_val * 38 * led_off;
+                
+                micro_nums_reverse_parse(counter_seconds);
+                
+                uint16_t duty_percent = ((uint32_t) duty_amount * 100) / MAX_DUTY_CYCLES;
+                sprintf(input_str, "%02d%% %04d %02d:%02d               \r", duty_percent, ADC_val, counter_seconds / 60, counter_seconds % 60);
+                
+                if (counter_seconds <= 1) the_state = FINISH;
+                counter_seconds -= 1;
+                
+                if (do_PB3_count) PB3_count += 1;
                 break;
             case PAUSE:
                 // add code to display countdown time
                 duty_amount = 100 + ADC_val * 38 * led_off;
+                sprintf(input_str, "Paused at %02d:%02d            \r", counter_seconds / 60, counter_seconds % 60);
                 break;
             case FINISH:
-                Disp2String("Countdown done!\r");
+                strcpy(input_str, "Countdown done!            \r");
                 duty_amount = 100 + ADC_val * 38;
+                
+                counter_seconds += 1;
+                if (counter_seconds == 5) {
+                    the_state = WAIT;
+                    counter_seconds = 0;
+                }
                 break;
         }
+        
+        
+        Disp2String(input_str);
         
         wait_until_T1();
     }
@@ -201,7 +264,45 @@ void __attribute__((interrupt, no_auto_psv)) _T2Interrupt(void){
 void __attribute__((interrupt, no_auto_psv)) _T3Interrupt(void){
     IFS0bits.T3IF = 0; // Clear interrupt flag
     
-    PB_achieved = PB_last;
+    if (PB_current == 0b000) {
+        if (the_state == WAIT) {
+            if (PB_last == 0b001) the_state = TIME_INPUT;
+        } else if (the_state == TIME_INPUT) {
+            micro_nums_parse();
+            if (PB_last == 0b100) {
+                the_state = COUNTDOWN_1;
+            } else if (PB_last == 0b010) {
+                counter_seconds = 0;
+                do_reverse_parse = 1;
+            }
+        } else if (the_state == COUNTDOWN_1) {
+            if (PB_last == 0b100) {
+                if (PB3_count >= PB3_HOLD_SECONDS) {
+                    PB3_count = 0;
+                    counter_seconds = 0;
+                    the_state = TIME_INPUT;
+                    do_reverse_parse = 1;
+                } else the_state = PAUSE;
+            }
+        } else if (the_state == COUNTDOWN_2) {
+            if (PB_last == 0b100) {
+                if (PB3_count >= PB3_HOLD_SECONDS) {
+                    PB3_count = 0;
+                    counter_seconds = 0;
+                    the_state = TIME_INPUT;
+                    do_reverse_parse = 1;
+                } else the_state = PAUSE;
+            }
+        } else if (the_state == PAUSE) {
+            if (PB_last == 0b100) the_state = COUNTDOWN_1;
+        }
+    }
+    
+    if (PB_current == 0b100 && (the_state == COUNTDOWN_1 || the_state == COUNTDOWN_2)) {
+        do_PB3_count = 1;
+    } else {
+        do_PB3_count = 0;
+    }
     
     PB_last = 0b000; // Resets the last button state
     //send_PB_current = 0b000; // Resets the current button state

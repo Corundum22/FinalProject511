@@ -2,7 +2,7 @@
 
 extern uint16_t ADC_val;
 
-uint16_t do_ADC() {
+/*uint16_t do_ADC() {
     // Declare variable to store ADC reading
     uint16_t ADC_value;
 
@@ -27,7 +27,7 @@ uint16_t do_ADC() {
     AD1CON1bits.ADON = 0; // Turn ADC off
     
     return ADC_value;
-}
+}*/
 
 void ADCinit() {
     AD1CON1bits.FORM = 0b00;

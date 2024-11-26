@@ -10,11 +10,21 @@
 #include "uart.h"
 #include "string.h"
 
-extern uint8_t received;
+extern enum statey {
+    WAIT,
+    TIME_INPUT,
+    COUNTDOWN_1,
+    COUNTDOWN_2,
+    PAUSE,
+    FINISH,
+};
+
+//extern uint8_t received;
 extern uint8_t received_char;
 extern uint8_t RXFlag;
 
-extern char micro_nums[4];
+extern char micro_nums[6];
+extern enum statey the_state;
 
 void InitUART2(void) 
 {
@@ -114,7 +124,7 @@ void XmitUART2(char CharNum, unsigned int repeatNo)
  * Note: there is commented-out skeleton code that could be (re)implemented to allow the function
  * return early without the ENTER key given an interrupt-set global flag. 
  ************************************************************************/
-void RecvUart(char* input, uint8_t buf_size)
+/*void RecvUart(char* input, uint8_t buf_size)
 {	
     uint16_t i = 0;
     char last_char;
@@ -142,7 +152,7 @@ void RecvUart(char* input, uint8_t buf_size)
         //     add logic here
         // }
     }
-}
+}*/
 
 /************************************************************************
  * Receive a single (alphanumeric) character over UART
@@ -191,11 +201,19 @@ void __attribute__ ((interrupt, no_auto_psv)) _U2RXInterrupt(void) {
     
     received_char = U2RXREG;
     
-    micro_nums[0] = micro_nums[1];
-    micro_nums[1] = micro_nums[2];
-    micro_nums[2] = micro_nums[3];
+    if (the_state == TIME_INPUT) {
+        if (received_char >= 48 && received_char <= 57) {
+            micro_nums[0] = micro_nums[1];
+            micro_nums[1] = micro_nums[3];
+            micro_nums[3] = micro_nums[4];
+            micro_nums[4] = received_char;
+        }
+    }
     
-    micro_nums[3] = received_char;
+    if (received_char == 'i') {
+        if (the_state == COUNTDOWN_1) the_state = COUNTDOWN_2;
+        else if (the_state == COUNTDOWN_2) the_state = COUNTDOWN_1;
+    }
     
 }
 
