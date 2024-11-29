@@ -41,8 +41,6 @@ void Timerinit();
 
 void primary_loop();
 
-void make_bar(char *target, uint8_t target_len, char *bar_char);
-
 void wait_until_T1();
 
 #endif
